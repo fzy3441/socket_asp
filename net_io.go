@@ -4,6 +4,7 @@ import (
 	"convert"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 )
 
@@ -17,7 +18,7 @@ type NetIO struct {
 func NewConn(inter INetIO, conn net.Conn) *NetIO {
 	netio := &NetIO{Inter: inter, Conn: conn}
 	if netio.Inter != nil {
-		netio.Inter.Disconn(netio)
+		netio.Inter.InitConn(netio)
 	}
 	return netio
 }
@@ -26,17 +27,22 @@ func NewConn(inter INetIO, conn net.Conn) *NetIO {
 func DailTcp(inter INetIO, address string) (*NetIO, error) {
 	conn, err := net.Dial("tcp", address)
 	netio := &NetIO{inter, conn, false}
+
+	if netio.Inter != nil {
+		netio.Inter.InitConn(netio)
+	}
 	return netio, err
 }
 
-func (obj *NetIO) Read(process func(buf []byte) bool) (bool, error) {
+// 读取客户端发送消息,并使用接口方法ProcessRead处理
+func (obj *NetIO) WaitRead() (bool, error) {
 	buf := make([]byte, 1024)
 	tmpBuf := make([]byte, 0)
 	for {
 		// 连接是不否中断
 		if obj.DisConn {
 			if obj.Inter != nil {
-				obj.Inter.InitConn(obj)
+				obj.Inter.Disconn()
 			}
 			return false, nil
 		}
@@ -44,10 +50,17 @@ func (obj *NetIO) Read(process func(buf []byte) bool) (bool, error) {
 		_, err := obj.Conn.Read(buf)
 
 		// 当彰连接己断开
-		if err != nil && err.Error() == "EOF" {
-			obj.DisConn = true
+		if err != nil {
+			if err.Error() == "EOF" {
+				obj.DisConn = true
+			} else {
+				// 错误信息显示 ##test##
+				fmt.Println("%+v\n", err)
+				obj.DisConn = true
+			}
 			continue
 		}
+
 		// 消息为空
 		if buf == nil && err == nil {
 			continue
@@ -78,9 +91,12 @@ func (obj *NetIO) Read(process func(buf []byte) bool) (bool, error) {
 // 发送消息
 func (obj *NetIO) Write(b []byte) error {
 	if obj.Inter != nil {
-		flag := obj.Inter.ProcessWrite(b)
+		buf, flag := obj.Inter.ProcessWrite(b)
 		if !flag {
 			return errors.New("args function \"ProcessWrite\" execution error")
+		}
+		if buf != nil {
+			b = buf
 		}
 	}
 
@@ -107,5 +123,7 @@ func (obj *NetIO) WriteJson(param interface{}) error {
 
 // 断开连接
 func (obj *NetIO) Close() {
+	obj.Inter.Disconn()
+	obj.DisConn = true
 	obj.Conn.Close()
 }
